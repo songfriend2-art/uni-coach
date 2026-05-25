@@ -270,7 +270,7 @@ textarea { resize:vertical; min-height:70px; }
 
 <script>
 var API_BASE = window.location.origin;
-var history = [];
+var chatHistory = [];
 var loading = false;
 var uploadedCount = 0;
 var selectedUniv = null;
@@ -482,7 +482,7 @@ function sendMsg(overrideText) {
   addMsg('user', text);
   showTyping();
 
-  history.push({ role: 'user', content: text });
+  chatHistory.push({ role: 'user', content: text });
 
   var profile = {
     major: document.getElementById('inp-major').value.trim(),
@@ -501,7 +501,7 @@ function sendMsg(overrideText) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      messages: history.slice(-10),
+      messages: chatHistory.slice(-10),
       profile: profile,
       university: selectedUniv
     })
@@ -562,7 +562,7 @@ function sendMsg(overrideText) {
               } else {
                 bubbleEl.innerHTML = renderMd(fullText);
               }
-              history.push({ role: 'assistant', content: fullText });
+              chatHistory.push({ role: 'assistant', content: fullText });
               setLoading(false);
               return;
             } else if (eventType === 'error') {
