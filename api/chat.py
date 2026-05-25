@@ -197,7 +197,7 @@ class handler(BaseHTTPRequestHandler):
                         obj = json.loads(data)
                         delta = obj["choices"][0]["delta"].get("content", "")
                         if delta:
-                            self._send_event("delta", delta)
+                            self._send_event("delta", json.dumps({"t": delta}, ensure_ascii=False))
                     except Exception:
                         continue
 
