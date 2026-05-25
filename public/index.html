@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>대입 AI 코치</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #f5f4f0; --surface: #fff; --surface2: #f9f8f5;
+  --border: rgba(0,0,0,0.1); --text: #1a1a18; --muted: #6b6a65;
+  --accent: #1a73e8; --accent-bg: #e8f0fe;
+  --green: #2f9e44; --green-bg: #ebfbee;
+  --amber: #e67700; --amber-bg: #fff9db;
+  --red: #c92a2a; --red-bg: #fff5f5;
+}
+body { font-family: 'Apple SD Gothic Neo','Malgun Gothic',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; display:flex; flex-direction:column; font-size:14px; }
+.header { background:var(--surface); border-bottom:1px solid var(--border); padding:0 20px; height:56px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:100; }
+.logo { display:flex; align-items:center; gap:8px; font-weight:700; font-size:16px; }
+.logo-icon { width:30px; height:30px; background:var(--accent); border-radius:7px; display:flex; align-items:center; justify-content:center; color:white; font-size:15px; }
+.badge { font-size:11px; font-weight:600; padding:2px 7px; border-radius:20px; background:var(--green-bg); color:var(--green); }
+.main { display:flex; flex:1; max-width:1200px; margin:0 auto; width:100%; padding:20px; gap:20px; }
+.sidebar { width:300px; flex-shrink:0; display:flex; flex-direction:column; gap:14px; }
+.card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px; }
+.card-title { font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.6px; margin-bottom:12px; }
+.tab-bar { display:flex; gap:3px; background:var(--surface2); border:1px solid var(--border); border-radius:9px; padding:3px; }
+.tab { flex:1; padding:7px 4px; border-radius:6px; font-size:12px; font-weight:500; cursor:pointer; text-align:center; border:none; background:transparent; font-family:inherit; color:var(--muted); transition:all 0.15s; }
+.tab.active { background:var(--surface); color:var(--accent); font-weight:700; box-shadow:0 1px 4px rgba(0,0,0,0.08); }
+.field { margin-bottom:12px; }
+.label { font-size:12px; font-weight:600; color:var(--text); margin-bottom:5px; display:block; }
+input[type="text"], select, textarea { width:100%; padding:8px 11px; border:1px solid var(--border); border-radius:7px; font-family:inherit; font-size:13px; color:var(--text); background:var(--surface); outline:none; transition:border-color 0.15s; }
+input[type="text"]:focus, select:focus, textarea:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(26,115,232,0.1); }
+textarea { resize:vertical; min-height:70px; }
+.grade-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.grade-item .label { font-size:11px; }
+.tags { display:flex; flex-wrap:wrap; gap:5px; margin-top:5px; }
+.tag { font-size:12px; padding:4px 10px; border-radius:20px; border:1px solid var(--border); cursor:pointer; background:var(--surface); color:var(--muted); font-family:inherit; transition:all 0.15s; user-select:none; }
+.tag:hover { border-color:var(--accent); color:var(--accent); }
+.tag.on { background:var(--accent-bg); border-color:var(--accent); color:var(--accent); font-weight:600; }
+.btn-primary { width:100%; padding:12px; background:var(--accent); color:white; border:none; border-radius:9px; font-family:inherit; font-size:14px; font-weight:700; cursor:pointer; transition:all 0.15s; }
+.btn-primary:hover { background:#1557b0; }
+.btn-primary:disabled { background:#adb5bd; cursor:not-allowed; }
+.quick-btn { width:100%; text-align:left; padding:8px 11px; background:var(--surface2); border:1px solid var(--border); border-radius:7px; font-family:inherit; font-size:12px; color:var(--text); cursor:pointer; transition:all 0.15s; margin-bottom:5px; display:block; }
+.quick-btn:hover { background:var(--accent-bg); border-color:var(--accent); color:var(--accent); }
+.upload-zone { border:2px dashed var(--border); border-radius:9px; padding:18px; text-align:center; cursor:pointer; transition:all 0.15s; color:var(--muted); font-size:13px; display:block; }
+.upload-zone:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-bg); }
+.upload-zone input { display:none; }
+.upload-item { display:flex; align-items:center; gap:6px; padding:5px 9px; background:var(--green-bg); border-radius:5px; font-size:11px; color:var(--green); margin-top:5px; }
+.univ-filter { display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; }
+.univ-chip { font-size:11px; padding:3px 9px; border-radius:20px; border:1px solid var(--border); cursor:pointer; background:var(--surface); color:var(--muted); font-family:inherit; }
+.univ-chip:hover { border-color:var(--accent); color:var(--accent); }
+.univ-chip.on { background:var(--accent-bg); border-color:var(--accent); color:var(--accent); font-weight:600; }
+.chat-area { flex:1; display:flex; flex-direction:column; min-width:0; }
+.chat-messages { flex:1; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; overflow-y:auto; min-height:500px; max-height:72vh; }
+.welcome { text-align:center; padding:50px 20px; }
+.welcome-icon { width:64px; height:64px; background:var(--accent-bg); border-radius:16px; display:flex; align-items:center; justify-content:center; font-size:32px; margin:0 auto 16px; }
+.welcome h2 { font-size:20px; font-weight:700; margin-bottom:8px; }
+.welcome p { font-size:14px; color:var(--muted); line-height:1.7; max-width:420px; margin:0 auto 24px; }
+.welcome-chips { display:flex; flex-wrap:wrap; gap:7px; justify-content:center; }
+.chip { padding:7px 14px; background:var(--surface2); border:1px solid var(--border); border-radius:20px; font-size:12px; color:var(--text); cursor:pointer; transition:all 0.15s; font-family:inherit; }
+.chip:hover { background:var(--accent-bg); border-color:var(--accent); color:var(--accent); }
+.message { margin-bottom:20px; animation:fadeUp 0.25s ease; }
+@keyframes fadeUp { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+.msg-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.msg-avatar { width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; flex-shrink:0; }
+.msg-avatar.ai { background:var(--accent); color:white; }
+.msg-avatar.user { background:var(--surface2); border:1px solid var(--border); }
+.msg-name { font-size:12px; font-weight:600; color:var(--muted); }
+.msg-bubble { padding:12px 16px; border-radius:10px; font-size:14px; line-height:1.75; border:1px solid var(--border); }
+.msg-bubble.ai { background:var(--surface2); border-radius:3px 10px 10px 10px; }
+.msg-bubble.user { background:var(--accent-bg); border-color:rgba(26,115,232,0.15); border-radius:10px 3px 10px 10px; }
+.msg-bubble.ai h3 { font-size:14px; font-weight:700; color:var(--accent); margin:14px 0 7px; }
+.msg-bubble.ai h3:first-child { margin-top:0; }
+.msg-bubble.ai ul, .msg-bubble.ai ol { padding-left:18px; margin:6px 0; }
+.msg-bubble.ai li { margin-bottom:4px; }
+.msg-bubble.ai p { margin-bottom:8px; }
+.sources-bar { display:flex; align-items:center; gap:6px; margin-top:8px; flex-wrap:wrap; }
+.source-tag { font-size:11px; padding:2px 8px; background:var(--green-bg); color:var(--green); border-radius:10px; font-weight:500; }
+.typing { display:flex; align-items:center; gap:4px; padding:12px 16px; background:var(--surface2); border:1px solid var(--border); border-radius:3px 10px 10px 10px; width:fit-content; }
+.dot { width:7px; height:7px; background:var(--muted); border-radius:50%; animation:bounce 1.2s infinite; }
+.dot:nth-child(2) { animation-delay:0.2s; }
+.dot:nth-child(3) { animation-delay:0.4s; }
+@keyframes bounce { 0%,60%,100% { transform:translateY(0); } 30% { transform:translateY(-7px); } }
+.chat-input-area { display:flex; gap:8px; margin-top:12px; }
+.chat-input { flex:1; padding:11px 14px; border:1px solid var(--border); border-radius:9px; font-family:inherit; font-size:14px; background:var(--surface); color:var(--text); outline:none; transition:border-color 0.15s; }
+.chat-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(26,115,232,0.1); }
+.send-btn { padding:11px 18px; background:var(--accent); color:white; border:none; border-radius:9px; font-family:inherit; font-size:14px; font-weight:700; cursor:pointer; transition:background 0.15s; white-space:nowrap; }
+.send-btn:hover { background:#1557b0; }
+.send-btn:disabled { background:#adb5bd; cursor:not-allowed; }
+.footer { background:var(--surface); border-top:1px solid var(--border); padding:8px 20px; display:flex; align-items:center; gap:12px; font-size:11px; color:var(--muted); }
+.status-dot { width:6px; height:6px; background:var(--green); border-radius:50%; animation:pulse 2s infinite; }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.35; } }
+.progress-bar { height:3px; background:var(--accent-bg); border-radius:2px; overflow:hidden; margin-top:6px; display:none; }
+.progress-fill { height:100%; background:var(--accent); border-radius:2px; transition:width 0.3s; }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="logo">
+    <div class="logo-icon">🎓</div>
+    대입 AI 코치
+  </div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <span class="badge">Gemini + RAG</span>
+    <span style="font-size:11px;color:var(--muted)">대학어디가 기반</span>
+  </div>
+</header>
+
+<div class="main">
+  <aside class="sidebar">
+
+    <div class="tab-bar">
+      <button class="tab active" id="tab-btn-profile" onclick="switchTab('profile')">프로필</button>
+      <button class="tab" id="tab-btn-files" onclick="switchTab('files')">파일 업로드</button>
+      <button class="tab" id="tab-btn-quick" onclick="switchTab('quick')">빠른 질문</button>
+    </div>
+
+    <!-- 프로필 -->
+    <div id="panel-profile">
+      <div class="card">
+        <div class="card-title">🎯 희망 분야</div>
+        <div class="field">
+          <label class="label">학과/계열</label>
+          <input type="text" id="inp-major" placeholder="예: 컴퓨터공학, 의대, 경영학...">
+        </div>
+        <div class="label">빠른 선택</div>
+        <div class="tags" id="major-tags">
+          <button class="tag" onclick="pickMajor(this)">의학/치의학</button>
+          <button class="tag" onclick="pickMajor(this)">법학</button>
+          <button class="tag" onclick="pickMajor(this)">컴퓨터공학</button>
+          <button class="tag" onclick="pickMajor(this)">AI/데이터</button>
+          <button class="tag" onclick="pickMajor(this)">경영/경제</button>
+          <button class="tag" onclick="pickMajor(this)">건축학</button>
+          <button class="tag" onclick="pickMajor(this)">사범/교육</button>
+          <button class="tag" onclick="pickMajor(this)">간호학</button>
+          <button class="tag" onclick="pickMajor(this)">기계/항공</button>
+          <button class="tag" onclick="pickMajor(this)">예체능</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📊 현재 성적</div>
+        <div class="field">
+          <label class="label">학년</label>
+          <select id="inp-year">
+            <option value="고1">고등학교 1학년</option>
+            <option value="고2" selected>고등학교 2학년</option>
+            <option value="고3">고등학교 3학년</option>
+            <option value="재수">재수/N수</option>
+          </select>
+        </div>
+        <div class="grade-grid">
+          <div class="grade-item">
+            <label class="label">내신 평균 등급</label>
+            <input type="text" id="inp-naesin" placeholder="예: 2.3">
+          </div>
+          <div class="grade-item">
+            <label class="label">모의고사 백분위</label>
+            <input type="text" id="inp-mock" placeholder="예: 85">
+          </div>
+        </div>
+        <div class="field" style="margin-top:10px">
+          <label class="label">강점 과목</label>
+          <div class="tags" id="subject-tags">
+            <button class="tag" onclick="toggleTag(this)">국어</button>
+            <button class="tag" onclick="toggleTag(this)">수학</button>
+            <button class="tag" onclick="toggleTag(this)">영어</button>
+            <button class="tag" onclick="toggleTag(this)">물리/화학</button>
+            <button class="tag" onclick="toggleTag(this)">생물/지학</button>
+            <button class="tag" onclick="toggleTag(this)">사회탐구</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📝 생기부 &amp; 전형</div>
+        <div class="field">
+          <label class="label">주요 활동</label>
+          <textarea id="inp-activities" placeholder="예: 수학 올림피아드 참가, 의학 탐구 동아리 부장..."></textarea>
+        </div>
+        <div class="field">
+          <label class="label">선호 전형</label>
+          <div class="tags" id="type-tags">
+            <button class="tag" onclick="toggleTag(this)">학생부종합</button>
+            <button class="tag" onclick="toggleTag(this)">학생부교과</button>
+            <button class="tag" onclick="toggleTag(this)">수능위주</button>
+            <button class="tag" onclick="toggleTag(this)">논술</button>
+          </div>
+        </div>
+      </div>
+
+      <button class="btn-primary" id="btn-analyze" onclick="analyzeProfile()">🔍 AI 분석 시작</button>
+    </div>
+
+    <!-- 파일 업로드 -->
+    <div id="panel-files" style="display:none">
+      <div class="card">
+        <div class="card-title">📁 입학전형 PDF 업로드</div>
+        <label class="upload-zone" id="upload-zone">
+          <input type="file" id="file-input" multiple accept=".pdf" onchange="handleFiles(this.files)">
+          <div style="font-size:26px;margin-bottom:6px">📄</div>
+          <div style="font-weight:700;margin-bottom:3px">PDF 파일 선택</div>
+          <div style="font-size:11px">대학어디가에서 받은 파일</div>
+          <div style="font-size:11px;margin-top:3px;color:var(--accent)">여러 파일 동시 선택 가능</div>
+        </label>
+        <div class="progress-bar" id="progress-bar">
+          <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+        </div>
+        <div id="file-list" style="margin-top:8px"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">🏫 업로드된 대학</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">클릭하면 해당 대학 집중 검색</div>
+        <div class="univ-filter" id="univ-filter">
+          <span style="font-size:12px;color:var(--muted)">아직 없음</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 빠른 질문 -->
+    <div id="panel-quick" style="display:none">
+      <div class="card">
+        <div class="card-title">💬 자주 묻는 질문</div>
+        <button class="quick-btn" onclick="quickAsk('의대 입시 전체 흐름과 필요한 준비를 자세히 알려줘')">🏥 의대 입시 가이드</button>
+        <button class="quick-btn" onclick="quickAsk('SKY 대학 컴퓨터공학과 선택과목과 생기부 활동 알려줘')">💻 SKY 컴공 전략</button>
+        <button class="quick-btn" onclick="quickAsk('내신 3등급 학생이 서울 대학 가는 전략 알려줘')">📊 내신 3등급 전략</button>
+        <button class="quick-btn" onclick="quickAsk('학생부종합전형 면접 준비와 자주 나오는 질문 알려줘')">🎤 종합전형 면접</button>
+        <button class="quick-btn" onclick="quickAsk('이과 기준 수능 선택과목 최적 조합 추천해줘')">📚 수능 선택과목</button>
+        <button class="quick-btn" onclick="quickAsk('고2 학생 지금 당장 해야 할 입시 준비 로드맵')">📅 고2 로드맵</button>
+        <button class="quick-btn" onclick="quickAsk('논술전형 준비 방법과 논술 잘 보는 대학 추천')">✍️ 논술전형 전략</button>
+        <button class="quick-btn" onclick="quickAsk('재수생 입시 전략과 주의사항 알려줘')">🔄 재수생 전략</button>
+      </div>
+    </div>
+
+  </aside>
+
+  <section class="chat-area">
+    <div class="chat-messages" id="chat-box">
+      <div class="welcome" id="welcome-screen">
+        <div class="welcome-icon">🎓</div>
+        <h2>대학입시 AI 코치</h2>
+        <p>PDF를 업로드하면 실제 입학전형 데이터를 기반으로 답변해드려요. 바로 질문도 가능합니다.</p>
+        <div class="welcome-chips">
+          <button class="chip" onclick="quickAsk('서울대 컴퓨터공학과 입시 전략 알려줘')">서울대 컴공 전략</button>
+          <button class="chip" onclick="quickAsk('의대 입시 준비 방법 전체 알려줘')">의대 입시 가이드</button>
+          <button class="chip" onclick="quickAsk('내신 2등급으로 갈 수 있는 서울 대학 추천')">내신 2등급 추천</button>
+          <button class="chip" onclick="quickAsk('고2 이과생이 지금 해야 할 준비 알려줘')">고2 이과 준비</button>
+        </div>
+      </div>
+    </div>
+    <div class="chat-input-area">
+      <input type="text" class="chat-input" id="chat-input"
+        placeholder="질문하세요. 예: 서울대 컴공 가려면 선택과목 뭐 해야 해?"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){sendMsg();event.preventDefault()}">
+      <button class="send-btn" id="send-btn" onclick="sendMsg()">전송 ↗</button>
+    </div>
+  </section>
+</div>
+
+<footer class="footer">
+  <div class="status-dot"></div>
+  <span>Gemini AI + Supabase RAG</span>
+  <span>·</span>
+  <span id="file-status">파일 미업로드</span>
+  <span>·</span>
+  <span id="univ-status">검색 대학: 전체</span>
+</footer>
+
+<script>
+var API_BASE = window.location.origin;
+var history = [];
+var loading = false;
+var uploadedCount = 0;
+var selectedUniv = null;
+
+function switchTab(name) {
+  ['profile','files','quick'].forEach(function(n) {
+    document.getElementById('panel-' + n).style.display = n === name ? 'block' : 'none';
+    document.getElementById('tab-btn-' + n).className = 'tab' + (n === name ? ' active' : '');
+  });
+  if (name === 'files') loadUnivList();
+}
+
+function pickMajor(el) {
+  document.querySelectorAll('#major-tags .tag').forEach(function(t) { t.className = 'tag'; });
+  el.className = 'tag on';
+  document.getElementById('inp-major').value = el.textContent.trim();
+}
+
+function toggleTag(el) {
+  el.className = el.className === 'tag' ? 'tag on' : 'tag';
+}
+
+function getOnTags(id) {
+  var r = [];
+  document.querySelectorAll('#' + id + ' .tag.on').forEach(function(t) { r.push(t.textContent.trim()); });
+  return r.join(', ');
+}
+
+function loadUnivList() {
+  fetch(API_BASE + '/api/list')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var container = document.getElementById('univ-filter');
+      var univs = data.universities || [];
+      if (univs.length === 0) {
+        container.innerHTML = '<span style="font-size:12px;color:var(--muted)">아직 없음</span>';
+        return;
+      }
+      container.innerHTML = '';
+      univs.forEach(function(u) {
+        var btn = document.createElement('button');
+        btn.className = 'univ-chip' + (selectedUniv === u.university ? ' on' : '');
+        btn.textContent = u.university;
+        btn.onclick = function() {
+          selectedUniv = selectedUniv === u.university ? null : u.university;
+          document.querySelectorAll('.univ-chip').forEach(function(c) { c.className = 'univ-chip'; });
+          if (selectedUniv) { btn.className = 'univ-chip on'; }
+          document.getElementById('univ-status').textContent = '검색 대학: ' + (selectedUniv || '전체');
+        };
+        container.appendChild(btn);
+      });
+    })
+    .catch(function() {});
+}
+
+async function handleFiles(fileList) {
+  var progressBar = document.getElementById('progress-bar');
+  var progressFill = document.getElementById('progress-fill');
+  var fileListEl = document.getElementById('file-list');
+  progressBar.style.display = 'block';
+
+  for (var i = 0; i < fileList.length; i++) {
+    var f = fileList[i];
+    var pct = Math.round((i / fileList.length) * 100);
+    progressFill.style.width = pct + '%';
+
+    var item = document.createElement('div');
+    item.className = 'upload-item';
+    item.id = 'upload-' + i;
+    item.innerHTML = '⏳ ' + f.name;
+    fileListEl.appendChild(item);
+
+    try {
+      var formData = new FormData();
+      formData.append('file', f);
+      var res = await fetch(API_BASE + '/api/upload', { method: 'POST', body: formData });
+      var data = await res.json();
+      if (data.success) {
+        item.innerHTML = '✅ ' + data.university + ' (' + data.chunks + '개 청크)';
+        uploadedCount++;
+      } else {
+        item.innerHTML = '❌ ' + f.name + ': ' + data.error;
+        item.style.background = 'var(--red-bg)';
+        item.style.color = 'var(--red)';
+      }
+    } catch(e) {
+      item.innerHTML = '❌ ' + f.name + ': 업로드 실패';
+      item.style.background = 'var(--red-bg)';
+      item.style.color = 'var(--red)';
+    }
+  }
+
+  progressFill.style.width = '100%';
+  setTimeout(function() { progressBar.style.display = 'none'; }, 1000);
+  document.getElementById('file-status').textContent = '파일 ' + uploadedCount + '개 업로드됨';
+  loadUnivList();
+}
+
+function analyzeProfile() {
+  var major = document.getElementById('inp-major').value.trim();
+  if (!major) { alert('희망 학과/분야를 입력하거나 선택해주세요!'); return; }
+  var prompt = '[학생 프로필 종합 분석]\n\n'
+    + '희망 분야: ' + major + '\n'
+    + '학년: ' + document.getElementById('inp-year').value + '\n';
+  var naesin = document.getElementById('inp-naesin').value.trim();
+  var mock = document.getElementById('inp-mock').value.trim();
+  var subjects = getOnTags('subject-tags');
+  var types = getOnTags('type-tags');
+  var activities = document.getElementById('inp-activities').value.trim();
+  if (naesin) prompt += '내신: ' + naesin + '등급\n';
+  if (mock) prompt += '모의고사: ' + mock + '%\n';
+  if (subjects) prompt += '강점과목: ' + subjects + '\n';
+  if (types) prompt += '선호전형: ' + types + '\n';
+  if (activities) prompt += '생기부 활동: ' + activities + '\n';
+  prompt += '\n위 프로필 기반으로:\n1. 추천 대학 (상위/중위/안정권)\n2. 최적 전형 전략\n3. 수능 선택과목 조합\n4. 생기부 보완 방향\n5. 지금 당장 해야 할 3가지';
+  sendMsg(prompt);
+}
+
+function quickAsk(q) { sendMsg(q); }
+
+function addMsg(role, content, sources) {
+  var ws = document.getElementById('welcome-screen');
+  if (ws) ws.remove();
+  var box = document.getElementById('chat-box');
+  var div = document.createElement('div');
+  div.className = 'message';
+  var isAI = role === 'assistant';
+  var bubble = isAI ? renderMd(content) : esc(content);
+  var sourcesHtml = '';
+  if (sources && sources.length > 0) {
+    sourcesHtml = '<div class="sources-bar"><span style="font-size:11px;color:var(--muted)">참고:</span>'
+      + sources.map(function(s) { return '<span class="source-tag">' + s + '</span>'; }).join('')
+      + '</div>';
+  }
+  div.innerHTML = '<div class="msg-row"><div class="msg-avatar ' + (isAI?'ai':'user') + '">' + (isAI?'AI':'나') + '</div>'
+    + '<span class="msg-name">' + (isAI?'AI 코치':'학생') + '</span></div>'
+    + '<div class="msg-bubble ' + (isAI?'ai':'user') + '">' + bubble + sourcesHtml + '</div>';
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
+
+function inlineFmt(s) {
+  s = s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  s = s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+  s = s.replace(/`(.+?)`/g,'<code style="background:var(--surface);padding:1px 5px;border-radius:4px;font-size:12px">$1</code>');
+  return s;
+}
+
+function renderMd(text) {
+  var lines = text.split('\n'), out = [], inUl = false, inOl = false;
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (/^#{1,3} (.+)/.test(line)) {
+      if (inUl) { out.push('</ul>'); inUl = false; }
+      if (inOl) { out.push('</ol>'); inOl = false; }
+      out.push('<h3>' + inlineFmt(line.replace(/^#{1,3} /,'')) + '</h3>');
+    } else if (/^(\d+)\. (.+)/.test(line)) {
+      var m = line.match(/^(\d+)\. (.+)/);
+      if (inUl) { out.push('</ul>'); inUl = false; }
+      if (!inOl) { out.push('<ol>'); inOl = true; }
+      out.push('<li>' + inlineFmt(m[2]) + '</li>');
+    } else if (/^[-•*] (.+)/.test(line)) {
+      var m2 = line.match(/^[-•*] (.+)/);
+      if (inOl) { out.push('</ol>'); inOl = false; }
+      if (!inUl) { out.push('<ul>'); inUl = true; }
+      out.push('<li>' + inlineFmt(m2[1]) + '</li>');
+    } else {
+      if (line.trim() === '') {
+        if (inUl) { out.push('</ul>'); inUl = false; }
+        if (inOl) { out.push('</ol>'); inOl = false; }
+        out.push('<br>');
+      } else {
+        out.push('<p>' + inlineFmt(line) + '</p>');
+      }
+    }
+  }
+  if (inUl) out.push('</ul>');
+  if (inOl) out.push('</ol>');
+  return out.join('');
+}
+
+function showTyping() {
+  var box = document.getElementById('chat-box');
+  var d = document.createElement('div');
+  d.className = 'message'; d.id = 'typing';
+  d.innerHTML = '<div class="msg-row"><div class="msg-avatar ai">AI</div><span class="msg-name">AI 코치</span></div>'
+    + '<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
+  box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
+}
+
+function removeTyping() { var d = document.getElementById('typing'); if (d) d.remove(); }
+
+function setLoading(v) {
+  loading = v;
+  document.getElementById('send-btn').disabled = v;
+  document.getElementById('btn-analyze').disabled = v;
+  document.getElementById('send-btn').textContent = v ? '...' : '전송 ↗';
+}
+
+function sendMsg(overrideText) {
+  var input = document.getElementById('chat-input');
+  var text = overrideText || input.value.trim();
+  if (!text || loading) return;
+  input.value = '';
+  setLoading(true);
+  addMsg('user', text);
+  showTyping();
+
+  history.push({ role: 'user', content: text });
+
+  var profile = {
+    major: document.getElementById('inp-major').value.trim(),
+    year: document.getElementById('inp-year').value,
+    naesin: document.getElementById('inp-naesin').value.trim(),
+    mock: document.getElementById('inp-mock').value.trim(),
+    subjects: getOnTags('subject-tags'),
+    types: getOnTags('type-tags')
+  };
+
+  fetch(API_BASE + '/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages: history.slice(-10),
+      profile: profile,
+      university: selectedUniv
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    removeTyping();
+    var reply = data.reply || '응답을 가져오지 못했어요.';
+    history.push({ role: 'assistant', content: reply });
+    addMsg('assistant', reply, data.sources);
+  })
+  .catch(function(e) {
+    removeTyping();
+    addMsg('assistant', '오류가 발생했습니다: ' + e.message);
+  })
+  .finally(function() { setLoading(false); });
+}
+</script>
+</body>
+</html>
