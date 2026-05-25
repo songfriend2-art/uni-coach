@@ -542,7 +542,7 @@ function sendMsg(overrideText) {
           } else if (line.startsWith('data: ')) {
             var data = line.slice(6);
             if (eventType === 'delta') {
-              fullText += data;
+              fullText += data.replace(/\\\\n/g, "\n");
               // 커서 제거하고 렌더링
               var cursor = document.getElementById('stream-cursor');
               if (cursor) cursor.remove();
