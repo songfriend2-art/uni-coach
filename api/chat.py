@@ -1,14 +1,14 @@
 """
-사용자 질문 → 임베딩 → Supabase 벡터 검색 → Groq 스트리밍 답변
+사용자 질문 → Supabase 벡터 검색 → Groq 스트리밍 답변
 """
 import os
 import json
 import re
 import hashlib
 import math
+import http.client
 from http.server import BaseHTTPRequestHandler
 from supabase import create_client
-import urllib.request
 
 SUPABASE_URL  = os.environ["SUPABASE_URL"]
 SUPABASE_KEY  = os.environ["SUPABASE_SERVICE_KEY"]
@@ -62,6 +62,37 @@ def build_context(rows: list) -> str:
         content = r.get("content", "")
         parts.append(f"[{univ} | 유사도 {sim:.2f}]\n{content}")
     return "\n\n---\n\n".join(parts)
+
+
+def call_groq_stream(messages: list, system: str):
+    """Groq API 스트리밍 호출 - http.client 사용"""
+    groq_messages = [{"role": "system", "content": system}]
+    for m in messages[-10:]:
+        groq_messages.append({
+            "role": m["role"],
+            "content": m["content"]
+        })
+
+    payload = json.dumps({
+        "model": "llama-3.1-8b-instant",
+        "messages": groq_messages,
+        "stream": True,
+        "temperature": 0.7,
+        "max_tokens": 2000
+    })
+
+    conn = http.client.HTTPSConnection("api.groq.com")
+    conn.request(
+        "POST",
+        "/openai/v1/chat/completions",
+        body=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + GROQ_KEY.strip(),
+            "User-Agent": "python-httplib"
+        }
+    )
+    return conn.getresponse(), conn
 
 
 class handler(BaseHTTPRequestHandler):
@@ -118,49 +149,40 @@ class handler(BaseHTTPRequestHandler):
         # sources 먼저 전송
         self._send_event("sources", json.dumps(sources, ensure_ascii=False))
 
-        # Groq 스트리밍 호출
+        # Groq 호출
         try:
-            groq_messages = [{"role": "system", "content": system}]
-            for m in messages[-10:]:
-                groq_messages.append({
-                    "role": m["role"],
-                    "content": m["content"]
-                })
+            resp, conn = call_groq_stream(messages, system)
 
-            payload = json.dumps({
-                "model": "llama-3.1-8b-instant",
-                "messages": groq_messages,
-                "stream": True,
-                "temperature": 0.7,
-                "max_tokens": 2000
-            }).encode("utf-8")
+            if resp.status != 200:
+                body = resp.read().decode("utf-8")
+                self._send_event("error", f"Groq 오류 {resp.status}: {body}")
+                return
 
-            req = urllib.request.Request(
-                "https://api.groq.com/openai/v1/chat/completions",
-                data=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {GROQ_KEY}"
-                }
-            )
-
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                for line in resp:
-                    line = line.decode("utf-8").strip()
+            buffer = ""
+            while True:
+                chunk = resp.read(1024)
+                if not chunk:
+                    break
+                buffer += chunk.decode("utf-8")
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    line = line.strip()
                     if not line.startswith("data: "):
                         continue
                     data = line[6:]
                     if data == "[DONE]":
-                        break
+                        self._send_event("done", "")
+                        return
                     try:
-                        chunk = json.loads(data)
-                        delta = chunk["choices"][0]["delta"].get("content", "")
+                        obj = json.loads(data)
+                        delta = obj["choices"][0]["delta"].get("content", "")
                         if delta:
                             self._send_event("delta", delta)
                     except Exception:
                         continue
 
             self._send_event("done", "")
+            conn.close()
 
         except Exception as e:
             self._send_event("error", str(e))
