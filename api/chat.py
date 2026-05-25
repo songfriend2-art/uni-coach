@@ -139,7 +139,7 @@ class handler(BaseHTTPRequestHandler):
         # Gemini 스트리밍 호출
         genai.configure(api_key=GEMINI_KEY)
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="gemini-2.0-flash-lite",
             system_instruction=system
         )
 
