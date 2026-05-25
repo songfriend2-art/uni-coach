@@ -1,5 +1,5 @@
 """
-사용자 질문 → 임베딩 → Supabase 벡터 검색 → Gemini 답변 생성
+사용자 질문 → 임베딩 → Supabase 벡터 검색 → Gemini 스트리밍 답변
 """
 import os
 import json
@@ -30,14 +30,12 @@ SYSTEM_PROMPT = """당신은 대한민국 최고의 대학입시 전문 컨설�
 
 
 def get_embedding(text: str) -> list:
-    """Gemini 임베딩 생성"""
     genai.configure(api_key=GEMINI_KEY)
     result = genai.embed_content(
         model="models/text-embedding-004",
         content=text[:2000],
         task_type="retrieval_query"
     )
-    # Gemini 임베딩은 768차원 → 1536에 맞게 패딩
     emb = result["embedding"]
     if len(emb) < 1536:
         emb = emb + [0.0] * (1536 - len(emb))
@@ -45,7 +43,6 @@ def get_embedding(text: str) -> list:
 
 
 def get_embedding_fallback(text: str) -> list:
-    """폴백: 키워드 기반 sparse 벡터"""
     words = re.findall(r"[가-힣a-zA-Z]+", text.lower())
     vec = [0.0] * 1536
     for w in words:
@@ -55,8 +52,7 @@ def get_embedding_fallback(text: str) -> list:
     return [x / norm for x in vec]
 
 
-def search_docs(query: str, top_k: int = 6) -> list:
-    """Supabase 벡터 검색"""
+def search_docs(query: str, university_filter: str = None, top_k: int = 6) -> list:
     sb = create_client(SUPABASE_URL, SUPABASE_KEY)
     try:
         embedding = get_embedding(query)
@@ -67,7 +63,11 @@ def search_docs(query: str, top_k: int = 6) -> list:
         "query_embedding": embedding,
         "match_count": top_k
     }).execute()
-    return result.data or []
+
+    rows = result.data or []
+    if university_filter:
+        rows = [r for r in rows if university_filter in r.get("university", "")]
+    return rows
 
 
 def build_context(rows: list) -> str:
@@ -93,11 +93,12 @@ class handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body   = json.loads(self.rfile.read(length))
 
-        messages = body.get("messages", [])
-        profile  = body.get("profile", {})
+        messages          = body.get("messages", [])
+        university_filter = body.get("university", None)
+        profile           = body.get("profile", {})
 
         if not messages:
-            self._json(400, {"error": "메시지가 없습니다"})
+            self._stream_error("메시지가 없습니다")
             return
 
         last_user_msg = next(
@@ -105,8 +106,9 @@ class handler(BaseHTTPRequestHandler):
         )
 
         # 벡터 검색
-        docs = search_docs(last_user_msg)
+        docs = search_docs(last_user_msg, university_filter)
         context = build_context(docs)
+        sources = list({r.get("university", "") for r in docs if r.get("university")})
 
         # 시스템 프롬프트 구성
         system = SYSTEM_PROMPT
@@ -123,44 +125,59 @@ class handler(BaseHTTPRequestHandler):
             if parts:
                 system += "\n\n## 학생 프로필\n" + "\n".join(parts)
 
-        # Gemini API 호출
+        # 스트리밍 헤더 전송
+        self.send_response(200)
+        self._cors()
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        # sources 먼저 전송
+        self._send_event("sources", json.dumps(sources, ensure_ascii=False))
+
+        # Gemini 스트리밍 호출
         genai.configure(api_key=GEMINI_KEY)
         model = genai.GenerativeModel(
             model_name="gemini-1.5-flash",
             system_instruction=system
         )
 
-        # 대화 히스토리 변환 (Gemini 형식)
-        history = []
+        gemini_history = []
         for m in messages[:-1]:
             role = "user" if m["role"] == "user" else "model"
-            history.append({"role": role, "parts": [m["content"]]})
+            gemini_history.append({"role": role, "parts": [m["content"]]})
 
-        chat = model.start_chat(history=history)
-        response = chat.send_message(last_user_msg)
-        reply = response.text
+        chat = model.start_chat(history=gemini_history)
 
-        sources = list({r.get("university", "") for r in docs if r.get("university")})
+        try:
+            response = chat.send_message(last_user_msg, stream=True)
+            for chunk in response:
+                if chunk.text:
+                    self._send_event("delta", chunk.text)
+            self._send_event("done", "")
+        except Exception as e:
+            self._send_event("error", str(e))
 
-        self._json(200, {
-            "reply": reply,
-            "sources": sources,
-            "context_used": bool(context)
-        })
+    def _send_event(self, event: str, data: str):
+        try:
+            msg = f"event: {event}\ndata: {data}\n\n"
+            self.wfile.write(msg.encode("utf-8"))
+            self.wfile.flush()
+        except Exception:
+            pass
+
+    def _stream_error(self, msg: str):
+        self.send_response(200)
+        self._cors()
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.end_headers()
+        self._send_event("error", msg)
 
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
-
-    def _json(self, status, data):
-        body = json.dumps(data, ensure_ascii=False).encode()
-        self.send_response(status)
-        self._cors()
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", len(body))
-        self.end_headers()
-        self.wfile.write(body)
 
     def log_message(self, *args):
         pass

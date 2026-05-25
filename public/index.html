@@ -90,6 +90,7 @@ textarea { resize:vertical; min-height:70px; }
 .footer { background:var(--surface); border-top:1px solid var(--border); padding:8px 20px; display:flex; align-items:center; gap:12px; font-size:11px; color:var(--muted); }
 .status-dot { width:6px; height:6px; background:var(--green); border-radius:50%; animation:pulse 2s infinite; }
 @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.35; } }
+@keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0; } }
 .progress-bar { height:3px; background:var(--accent-bg); border-radius:2px; overflow:hidden; margin-top:6px; display:none; }
 .progress-fill { height:100%; background:var(--accent); border-radius:2px; transition:width 0.3s; }
 </style>
@@ -492,6 +493,10 @@ function sendMsg(overrideText) {
     types: getOnTags('type-tags')
   };
 
+  var fullText = '';
+  var sources = [];
+  var bubbleEl = null;
+
   fetch(API_BASE + '/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -501,18 +506,82 @@ function sendMsg(overrideText) {
       university: selectedUniv
     })
   })
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
+  .then(function(res) {
     removeTyping();
-    var reply = data.reply || '응답을 가져오지 못했어요.';
-    history.push({ role: 'assistant', content: reply });
-    addMsg('assistant', reply, data.sources);
+
+    // 스트리밍 말풍선 생성
+    var ws = document.getElementById('welcome-screen');
+    if (ws) ws.remove();
+    var box = document.getElementById('chat-box');
+    var div = document.createElement('div');
+    div.className = 'message';
+    div.innerHTML = '<div class="msg-row"><div class="msg-avatar ai">AI</div><span class="msg-name">AI 코치</span></div>'
+      + '<div class="msg-bubble ai" id="stream-bubble"><span id="stream-cursor" style="display:inline-block;width:2px;height:14px;background:var(--accent);margin-left:2px;animation:blink 1s infinite;vertical-align:middle;"></span></div>';
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+    bubbleEl = document.getElementById('stream-bubble');
+
+    // SSE 읽기
+    var reader = res.body.getReader();
+    var decoder = new TextDecoder();
+    var buffer = '';
+
+    function read() {
+      return reader.read().then(function(result) {
+        if (result.done) return;
+        buffer += decoder.decode(result.value, { stream: true });
+
+        var lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        var eventType = '';
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i];
+          if (line.startsWith('event: ')) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            var data = line.slice(6);
+            if (eventType === 'delta') {
+              fullText += data;
+              // 커서 제거하고 렌더링
+              var cursor = document.getElementById('stream-cursor');
+              if (cursor) cursor.remove();
+              bubbleEl.innerHTML = renderMd(fullText)
+                + '<span id="stream-cursor" style="display:inline-block;width:2px;height:14px;background:var(--accent);margin-left:2px;animation:blink 1s infinite;vertical-align:middle;"></span>';
+              box.scrollTop = box.scrollHeight;
+            } else if (eventType === 'sources') {
+              try { sources = JSON.parse(data); } catch(e) {}
+            } else if (eventType === 'done') {
+              // 커서 제거, 최종 렌더링
+              var cursor = document.getElementById('stream-cursor');
+              if (cursor) cursor.remove();
+              if (sources.length > 0) {
+                var bar = '<div class="sources-bar"><span style="font-size:11px;color:var(--muted)">참고:</span>'
+                  + sources.map(function(s) { return '<span class="source-tag">' + s + '</span>'; }).join('') + '</div>';
+                bubbleEl.innerHTML = renderMd(fullText) + bar;
+              } else {
+                bubbleEl.innerHTML = renderMd(fullText);
+              }
+              history.push({ role: 'assistant', content: fullText });
+              setLoading(false);
+              return;
+            } else if (eventType === 'error') {
+              bubbleEl.innerHTML = '오류가 발생했습니다: ' + data;
+              setLoading(false);
+              return;
+            }
+          }
+        }
+        return read();
+      });
+    }
+    return read();
   })
   .catch(function(e) {
     removeTyping();
     addMsg('assistant', '오류가 발생했습니다: ' + e.message);
-  })
-  .finally(function() { setLoading(false); });
+    setLoading(false);
+  });
 }
 </script>
 </body>
