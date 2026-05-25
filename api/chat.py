@@ -74,7 +74,7 @@ def call_groq_stream(messages: list, system: str):
         })
 
     payload = json.dumps({
-        "model": "llama-3.1-8b-instant",
+        "model": "llama-3.3-70b-versatile",
         "messages": groq_messages,
         "stream": True,
         "temperature": 0.7,
@@ -177,7 +177,7 @@ class handler(BaseHTTPRequestHandler):
                         obj = json.loads(data)
                         delta = obj["choices"][0]["delta"].get("content", "")
                         if delta:
-                            self._send_event("delta", delta)
+                            self._send_event("delta", delta.replace("\n", "\\n"))
                     except Exception:
                         continue
 
