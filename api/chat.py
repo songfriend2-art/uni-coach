@@ -1,5 +1,6 @@
 """
 사용자 질문 → Supabase 벡터 검색 → Groq 스트리밍 답변
+한글 UTF-8 버퍼 처리 수정
 """
 import os
 import json
@@ -64,37 +65,6 @@ def build_context(rows: list) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-def call_groq_stream(messages: list, system: str):
-    """Groq API 스트리밍 호출 - http.client 사용"""
-    groq_messages = [{"role": "system", "content": system}]
-    for m in messages[-10:]:
-        groq_messages.append({
-            "role": m["role"],
-            "content": m["content"]
-        })
-
-    payload = json.dumps({
-        "model": "llama-3.3-70b-versatile",
-        "messages": groq_messages,
-        "stream": True,
-        "temperature": 0.7,
-        "max_tokens": 2000
-    })
-
-    conn = http.client.HTTPSConnection("api.groq.com")
-    conn.request(
-        "POST",
-        "/openai/v1/chat/completions",
-        body=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + GROQ_KEY.strip(),
-            "User-Agent": "python-httplib"
-        }
-    )
-    return conn.getresponse(), conn
-
-
 class handler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
@@ -151,33 +121,83 @@ class handler(BaseHTTPRequestHandler):
 
         # Groq 호출
         try:
-            resp, conn = call_groq_stream(messages, system)
+            groq_messages = [{"role": "system", "content": system}]
+            for m in messages[-10:]:
+                groq_messages.append({"role": m["role"], "content": m["content"]})
+
+            payload = json.dumps({
+                "model": "llama-3.3-70b-versatile",
+                "messages": groq_messages,
+                "stream": True,
+                "temperature": 0.7,
+                "max_tokens": 2000
+            })
+
+            conn = http.client.HTTPSConnection("api.groq.com")
+            conn.request(
+                "POST",
+                "/openai/v1/chat/completions",
+                body=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer " + GROQ_KEY.strip(),
+                    "User-Agent": "python-httplib"
+                }
+            )
+            resp = conn.getresponse()
 
             if resp.status != 200:
-                body = resp.read().decode("utf-8")
-                self._send_event("error", f"Groq 오류 {resp.status}: {body}")
+                err = resp.read().decode("utf-8", errors="replace")
+                self._send_event("error", f"Groq 오류 {resp.status}: {err}")
                 return
 
-            buffer = ""
+            # 바이트 버퍼로 한글 잘림 방지
+            byte_buffer = b""
+            line_buffer = ""
+
             while True:
-                chunk = resp.read(1024)
+                chunk = resp.read(256)
                 if not chunk:
                     break
-                buffer += chunk.decode("utf-8")
-                while "\n" in buffer:
-                    line, buffer = buffer.split("\n", 1)
+
+                byte_buffer += chunk
+                # UTF-8 안전 디코딩 (잘린 멀티바이트 보호)
+                try:
+                    decoded = byte_buffer.decode("utf-8")
+                    byte_buffer = b""
+                except UnicodeDecodeError:
+                    # 마지막 바이트가 잘렸을 경우 다음 청크를 기다림
+                    try:
+                        decoded = byte_buffer[:-1].decode("utf-8")
+                        byte_buffer = byte_buffer[-1:]
+                    except UnicodeDecodeError:
+                        try:
+                            decoded = byte_buffer[:-2].decode("utf-8")
+                            byte_buffer = byte_buffer[-2:]
+                        except UnicodeDecodeError:
+                            try:
+                                decoded = byte_buffer[:-3].decode("utf-8")
+                                byte_buffer = byte_buffer[-3:]
+                            except UnicodeDecodeError:
+                                continue
+
+                line_buffer += decoded
+
+                while "\n" in line_buffer:
+                    line, line_buffer = line_buffer.split("\n", 1)
                     line = line.strip()
                     if not line.startswith("data: "):
                         continue
                     data = line[6:]
                     if data == "[DONE]":
                         self._send_event("done", "")
+                        conn.close()
                         return
                     try:
                         obj = json.loads(data)
                         delta = obj["choices"][0]["delta"].get("content", "")
                         if delta:
-                            self._send_event("delta", delta.replace("\n", "\\n"))
+                            self._send_event("delta", delta)
                     except Exception:
                         continue
 
