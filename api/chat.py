@@ -1,6 +1,5 @@
 """
-사용자 질문 → 임베딩 → Supabase 벡터 검색 → Gemini 스트리밍 답변
-google-genai 신버전 사용
+사용자 질문 → 임베딩 → Supabase 벡터 검색 → Groq 스트리밍 답변
 """
 import os
 import json
@@ -8,13 +7,12 @@ import re
 import hashlib
 import math
 from http.server import BaseHTTPRequestHandler
-from google import genai
-from google.genai import types
 from supabase import create_client
+import urllib.request
 
 SUPABASE_URL  = os.environ["SUPABASE_URL"]
 SUPABASE_KEY  = os.environ["SUPABASE_SERVICE_KEY"]
-GEMINI_KEY    = os.environ["GEMINI_API_KEY"]
+GROQ_KEY      = os.environ["GROQ_API_KEY"]
 
 SYSTEM_PROMPT = """당신은 대한민국 최고의 대학입시 전문 컨설턴트입니다.
 학생부종합·교과·수능·논술 등 모든 전형에 정통하며 15년 이상의 상담 경험을 갖고 있습니다.
@@ -41,24 +39,9 @@ def get_embedding_fallback(text: str) -> list:
     return [x / norm for x in vec]
 
 
-def get_embedding(text: str) -> list:
-    try:
-        client = genai.Client(api_key=GEMINI_KEY)
-        result = client.models.embed_content(
-            model="models/text-embedding-004",
-            contents=text[:2000],
-        )
-        emb = result.embeddings[0].values
-        if len(emb) < 1536:
-            emb = list(emb) + [0.0] * (1536 - len(emb))
-        return list(emb[:1536])
-    except Exception:
-        return get_embedding_fallback(text)
-
-
 def search_docs(query: str, university_filter: str = None, top_k: int = 6) -> list:
     sb = create_client(SUPABASE_URL, SUPABASE_KEY)
-    embedding = get_embedding(query)
+    embedding = get_embedding_fallback(query)
     result = sb.rpc("match_documents", {
         "query_embedding": embedding,
         "match_count": top_k
@@ -135,32 +118,47 @@ class handler(BaseHTTPRequestHandler):
         # sources 먼저 전송
         self._send_event("sources", json.dumps(sources, ensure_ascii=False))
 
-        # Gemini 스트리밍 호출
+        # Groq 스트리밍 호출
         try:
-            client = genai.Client(api_key=GEMINI_KEY)
+            groq_messages = [{"role": "system", "content": system}]
+            for m in messages[-10:]:
+                groq_messages.append({
+                    "role": m["role"],
+                    "content": m["content"]
+                })
 
-            # 대화 히스토리 변환
-            gemini_history = []
-            for m in messages[:-1]:
-                role = "user" if m["role"] == "user" else "model"
-                gemini_history.append(
-                    types.Content(role=role, parts=[types.Part(text=m["content"])])
-                )
+            payload = json.dumps({
+                "model": "llama-3.1-8b-instant",
+                "messages": groq_messages,
+                "stream": True,
+                "temperature": 0.7,
+                "max_tokens": 2000
+            }).encode("utf-8")
 
-            config = types.GenerateContentConfig(
-                system_instruction=system,
-                temperature=0.7,
+            req = urllib.request.Request(
+                "https://api.groq.com/openai/v1/chat/completions",
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {GROQ_KEY}"
+                }
             )
 
-            for chunk in client.models.generate_content_stream(
-                model="gemini-2.0-flash-lite",
-                contents=gemini_history + [
-                    types.Content(role="user", parts=[types.Part(text=last_user_msg)])
-                ],
-                config=config,
-            ):
-                if chunk.text:
-                    self._send_event("delta", chunk.text)
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                for line in resp:
+                    line = line.decode("utf-8").strip()
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:]
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                        delta = chunk["choices"][0]["delta"].get("content", "")
+                        if delta:
+                            self._send_event("delta", delta)
+                    except Exception:
+                        continue
 
             self._send_event("done", "")
 
