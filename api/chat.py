@@ -1,5 +1,6 @@
 """
 사용자 질문 → 임베딩 → Supabase 벡터 검색 → Gemini 스트리밍 답변
+google-genai 신버전 사용
 """
 import os
 import json
@@ -7,7 +8,8 @@ import re
 import hashlib
 import math
 from http.server import BaseHTTPRequestHandler
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from supabase import create_client
 
 SUPABASE_URL  = os.environ["SUPABASE_URL"]
@@ -26,20 +28,7 @@ SYSTEM_PROMPT = """당신은 대한민국 최고의 대학입시 전문 컨설�
 - 수능 최저기준, 내신 반영 비율 등 실제 전형 정보 포함
 - 불확실한 정보는 "확인 필요" 명시
 - 한국어로 친근하고 명확하게, 구조화된 형식으로 답변
-- 2024-2025학년도 입시 기준"""
-
-
-def get_embedding(text: str) -> list:
-    genai.configure(api_key=GEMINI_KEY)
-    result = genai.embed_content(
-        model="models/text-embedding-004",
-        content=text[:2000],
-        task_type="retrieval_query"
-    )
-    emb = result["embedding"]
-    if len(emb) < 1536:
-        emb = emb + [0.0] * (1536 - len(emb))
-    return emb[:1536]
+- 2028학년도 입시 기준"""
 
 
 def get_embedding_fallback(text: str) -> list:
@@ -52,18 +41,28 @@ def get_embedding_fallback(text: str) -> list:
     return [x / norm for x in vec]
 
 
+def get_embedding(text: str) -> list:
+    try:
+        client = genai.Client(api_key=GEMINI_KEY)
+        result = client.models.embed_content(
+            model="models/text-embedding-004",
+            contents=text[:2000],
+        )
+        emb = result.embeddings[0].values
+        if len(emb) < 1536:
+            emb = list(emb) + [0.0] * (1536 - len(emb))
+        return list(emb[:1536])
+    except Exception:
+        return get_embedding_fallback(text)
+
+
 def search_docs(query: str, university_filter: str = None, top_k: int = 6) -> list:
     sb = create_client(SUPABASE_URL, SUPABASE_KEY)
-    try:
-        embedding = get_embedding(query)
-    except Exception:
-        embedding = get_embedding_fallback(query)
-
+    embedding = get_embedding(query)
     result = sb.rpc("match_documents", {
         "query_embedding": embedding,
         "match_count": top_k
     }).execute()
-
     rows = result.data or []
     if university_filter:
         rows = [r for r in rows if university_filter in r.get("university", "")]
@@ -75,8 +74,8 @@ def build_context(rows: list) -> str:
         return ""
     parts = []
     for r in rows:
-        univ = r.get("university", "")
-        sim  = r.get("similarity", 0)
+        univ    = r.get("university", "")
+        sim     = r.get("similarity", 0)
         content = r.get("content", "")
         parts.append(f"[{univ} | 유사도 {sim:.2f}]\n{content}")
     return "\n\n---\n\n".join(parts)
@@ -106,7 +105,7 @@ class handler(BaseHTTPRequestHandler):
         )
 
         # 벡터 검색
-        docs = search_docs(last_user_msg, university_filter)
+        docs    = search_docs(last_user_msg, university_filter)
         context = build_context(docs)
         sources = list({r.get("university", "") for r in docs if r.get("university")})
 
@@ -137,25 +136,34 @@ class handler(BaseHTTPRequestHandler):
         self._send_event("sources", json.dumps(sources, ensure_ascii=False))
 
         # Gemini 스트리밍 호출
-        genai.configure(api_key=GEMINI_KEY)
-        model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash-lite",
-            system_instruction=system
-        )
-
-        gemini_history = []
-        for m in messages[:-1]:
-            role = "user" if m["role"] == "user" else "model"
-            gemini_history.append({"role": role, "parts": [m["content"]]})
-
-        chat = model.start_chat(history=gemini_history)
-
         try:
-            response = chat.send_message(last_user_msg, stream=True)
-            for chunk in response:
+            client = genai.Client(api_key=GEMINI_KEY)
+
+            # 대화 히스토리 변환
+            gemini_history = []
+            for m in messages[:-1]:
+                role = "user" if m["role"] == "user" else "model"
+                gemini_history.append(
+                    types.Content(role=role, parts=[types.Part(text=m["content"])])
+                )
+
+            config = types.GenerateContentConfig(
+                system_instruction=system,
+                temperature=0.7,
+            )
+
+            for chunk in client.models.generate_content_stream(
+                model="gemini-2.0-flash-lite",
+                contents=gemini_history + [
+                    types.Content(role="user", parts=[types.Part(text=last_user_msg)])
+                ],
+                config=config,
+            ):
                 if chunk.text:
                     self._send_event("delta", chunk.text)
+
             self._send_event("done", "")
+
         except Exception as e:
             self._send_event("error", str(e))
 
